@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm
 from matplotlib.contour import QuadContourSet
+from matplotlib.collections import QuadMesh
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import cartopy.crs as ccrs
 from cartopy.io.shapereader import BasicReader
@@ -49,6 +51,7 @@ def configure_gridlines(ax: plt.Axes, xticks: list[int], yticks: list[int]) -> N
     --------
     None
     """
+    ax.figure.canvas.draw()  # Automatically retrieve the figure from the axis and force a redraw
     ax.gridlines(xlocs=xticks, ylocs=yticks, draw_labels=False, linewidth=0.8, color='k', alpha=0.6, linestyle='--')
     ax.xaxis.set_major_formatter(LONGITUDE_FORMATTER)
     ax.yaxis.set_major_formatter(LATITUDE_FORMATTER)
@@ -84,9 +87,10 @@ def draw_d02_boundary(ax: plt.Axes, lon_1: np.ndarray, lat_1: np.ndarray) -> Non
 def plot_domain(ax: plt.Axes, lon: np.ndarray, lat: np.ndarray, hgt: np.ndarray, 
                 xticks: list[int], yticks: list[int], 
                 provinces: BasicReader, countries: BasicReader, 
-                cmap: plt.cm.ScalarMappable, title: str) -> QuadContourSet:
+                cmap: plt.cm.ScalarMappable, title: str, 
+                use_pcolormesh: bool = False) -> Union[QuadContourSet, QuadMesh]:
     """
-    Plot a domain with topography, gridlines, and geographic boundaries.
+    Plot a domain with topography, gridlines, and geographic boundaries using either contourf or pcolormesh.
 
     Parameters:
     -----------
@@ -110,23 +114,51 @@ def plot_domain(ax: plt.Axes, lon: np.ndarray, lat: np.ndarray, hgt: np.ndarray,
         Colormap for the terrain heights.
     title : str
         Title of the subplot.
+    use_pcolormesh : bool, optional
+        If True, use pcolormesh for plotting. If False, use contourf. Default is False.
 
     Returns:
     --------
-    matplotlib.contour.QuadContourSet
-        The contour object representing the terrain heights.
+    Union[matplotlib.contour.QuadContourSet, matplotlib.collections.QuadMesh]
+        The plot object created by either contourf or pcolormesh.
     """
-    contour = ax.contourf(lon, lat, hgt, transform=ccrs.PlateCarree(), cmap=cmap, levels=np.arange(0, 5000 + 100, 100))
+    hgt_min, hgt_max = np.nanmin(hgt), np.nanmax(hgt)
+    if hgt_max > 5000 and hgt_min < 0:
+        extend = 'both'
+    elif hgt_max > 5000:
+        extend = 'max'
+    elif hgt_min < 0:
+        extend = 'min'
+    else:
+        extend = None
+
+    if use_pcolormesh:
+        levels = np.arange(0, 5000 + 100, 100)
+        norm = BoundaryNorm(levels, ncolors=cmap.N, extend=extend)
+        mesh = ax.pcolormesh(lon, lat, hgt, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, shading='auto')
+        plot_object = mesh
+    else:
+        contour = ax.contourf(
+            lon, lat, hgt, transform=ccrs.PlateCarree(), cmap=cmap, 
+            levels=np.arange(0, 5000 + 100, 100), extend=extend
+        )
+        plot_object = contour
+
+    # Add geographic boundaries and gridlines
     add_geometries(ax, provinces, countries)
     configure_gridlines(ax, xticks, yticks)
+
+    # Set title
     ax.set_title(title)
-    return contour
+
+    return plot_object
+
 
 if __name__ == "__main__":
 
     lon, lat, proj, hgt, lon_1, lat_1, hgt_1 = process_data(path='/data8/huangty/cn_WRF/2019_wps/')
 
-    fig = plt.figure(figsize=(20, 12), dpi=200)
+    fig = plt.figure(figsize=(28, 12), dpi=200)
     plt.tight_layout()
 
     provinces = BasicReader('/data6/huangty/NCL-Chinamap-master/cnmap/cnmap.shp')
@@ -134,15 +166,16 @@ if __name__ == "__main__":
     cmap = cmaps.MPL_terrain
 
     ax = fig.add_axes([0.09, 0.15, 0.4, 0.7], projection=proj)
-    contour = plot_domain(ax, lon, lat, hgt, [75, 90, 105, 120, 135], [10, 20, 30, 40, 50], provinces, countries, cmap, "Domain d01")
-
+    contour = plot_domain(ax, lon, lat, hgt, [75, 90, 105, 120, 135], [10, 20, 30, 40, 50], provinces, countries, cmap, "Domain d01", use_pcolormesh=True)
+    #  contour = plot_domain(ax, lon, lat, hgt, [75, 90, 105, 120, 135], [10, 20, 30, 40, 50], provinces, countries, cmap, "Domain d01")
     draw_d02_boundary(ax, lon_1, lat_1)
-    ax_inset = add_equal_axes(ax, loc='right', pad=0.05, width=0.4, projection=proj)
-    plot_domain(ax_inset, lon_1, lat_1, hgt_1, [100, 105, 110, 115, 120], [20, 25, 30, 35, 40], provinces, countries, cmap, "Domain d02")
 
-    cbar = plt.colorbar(contour, ax=[ax, ax_inset], orientation='horizontal', pad=0.05, shrink=0.7)
+    ax_inset = add_equal_axes(ax, loc='right', pad=0.03, width=0.4, projection=proj)
+    plot_domain(ax_inset, lon_1, lat_1, hgt_1, [100, 105, 110, 115, 120], [20, 25, 30, 35, 40], provinces, countries, cmap, "Domain d02", use_pcolormesh=True)
+    #  plot_domain(ax_inset, lon_1, lat_1, hgt_1, [100, 105, 110, 115, 120], [20, 25, 30, 35, 40], provinces, countries, cmap, "Domain d02")
+
+    cbar = plt.colorbar(contour, ax=[ax, ax_inset], orientation='horizontal', pad=0.1, shrink=0.8, aspect=30)
     cbar.set_label('Height (m)')
 
     mark_inset(ax, ax_inset, loc1a=2, loc1b=1, loc2a=3, loc2b=4, fc="none", ec='k', lw=0.75)
-    plt.savefig("study_area.png")
-
+    plt.savefig("WRF_domain.png")
